@@ -1,0 +1,17 @@
+[package]
+name = "ssb-noise-filter"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+description = "Real-time noise filter for ham radio SSB voice (RNNoise + bandpass)"
+
+[dependencies]
+cpal = "0.18"
+eframe = "0.36"
+egui = "0.36"
+nnnoiseless = { version = "0.5.2", default-features = false }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
