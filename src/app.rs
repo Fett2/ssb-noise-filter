@@ -48,6 +48,10 @@ pub struct Engine {
     pub error: Option<String>,
     pub in_peak: Arc<AtomicU32>,
     pub out_peak: Arc<AtomicU32>,
+    /// 0.0-1.0: fraction of the denoised output used (the rest is the
+    /// band-passed original). Published by the GUI, read per frame by the
+    /// capture callback.
+    pub nr_amount: Arc<AtomicU32>,
     pub display_in: f32,
     pub display_out: f32,
     running: Option<Running>,
@@ -72,6 +76,7 @@ impl Engine {
             error: None,
             in_peak: Arc::new(AtomicU32::new(0.0f32.to_bits())),
             out_peak: Arc::new(AtomicU32::new(0.0f32.to_bits())),
+            nr_amount: Arc::new(AtomicU32::new(0.8f32.to_bits())),
             display_in: 0.0,
             display_out: 0.0,
             running: None,
@@ -129,6 +134,7 @@ impl Engine {
         let ring = Arc::new(SpscRing::new(RING_SAMPLES));
         let in_peak = Arc::clone(&self.in_peak);
         let out_peak = Arc::clone(&self.out_peak);
+        let nr_amount = Arc::clone(&self.nr_amount);
 
         // All DSP state is created on the GUI thread and moved into the
         // real-time capture closure.
@@ -159,8 +165,14 @@ impl Engine {
                             *x *= I16_SCALE;
                         }
                         let _ = den.process_frame(&mut frame, &acc[..FRAME]);
-                        for x in &mut frame {
-                            *x /= I16_SCALE;
+                        // Blend the denoised frame with the band-passed
+                        // original (both still in i16 range), then scale back
+                        // to [-1, 1]. RNNoise's per-band gain snaps then only
+                        // move the output by the wet fraction, and signals the
+                        // RNN crushes keep a stable floor.
+                        let wet = f32::from_bits(nr_amount.load(Ordering::Relaxed));
+                        for (out, &x) in frame.iter_mut().zip(acc[..FRAME].iter()) {
+                            *out = (*out * wet + x * (1.0 - wet)) / I16_SCALE;
                         }
                         if first_frame {
                             // Discard RNNoise's first frame (fade-in artifact).

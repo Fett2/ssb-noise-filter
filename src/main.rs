@@ -84,6 +84,15 @@ impl eframe::App for FilterApp {
             });
 
             ui.add_space(8.0);
+            let mut pct = f32::from_bits(engine.nr_amount.load(Ordering::Relaxed)) * 100.0;
+            if ui
+                .add(egui::Slider::new(&mut pct, 0.0..=100.0).text("Noise reduction").suffix("%"))
+                .changed()
+            {
+                engine.nr_amount.store((pct / 100.0).to_bits(), Ordering::Relaxed);
+            }
+            ui.small("Blends the denoised signal with the raw band-passed one: lower it to soften pops and keep weak signals; 100% is full RNNoise.");
+            ui.add_space(4.0);
             meter(ui, "In", engine.display_in);
             meter(ui, "Out", engine.display_out);
 

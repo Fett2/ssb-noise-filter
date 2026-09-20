@@ -17,6 +17,7 @@ Real-time noise filter for ham radio SSB voice on Windows. It captures live audi
 - Samples are f32 but must be in the i16 PCM range `[-32768, 32767]` (not `[-1, 1]`): scale cpal's f32 by 32768 before and after `process_frame`
 - The first `process_frame` output has a fade-in artifact — discard it
 - SSB voice is 300–3000 Hz, so the mic signal is bandpassed *before* the denoiser (avoids out-of-band "underwater" artifacts)
+- The denoised output is blended with the band-passed original, `out = w·denoised + (1−w)·bandpassed`, where w is the GUI "Noise reduction" slider (default 80%). RNNoise's per-band gains attack instantly (only release is smoothed), so on flickering weak SSB signals the gain snaps cause pops and untrusted speech gets crushed; blending in the raw signal damps the snaps, restores timbre, and keeps a floor under weak signals. 100% = plain RNNoise
 - The *input* must be 48 kHz / 32-bit float (WASAPI shared mode + RNNoise); the *output* may run at any mix rate — the render callback linearly resamples 48 kHz to the device rate (safe because the signal is band-limited to 3 kHz)
 - Rejected: EMNR (Thetis NR2 — needs C FFI + FFTW + GPL), WebRTC NS (less proven on SSB), spectral subtraction (musical noise)
 
@@ -24,6 +25,7 @@ Real-time noise filter for ham radio SSB voice on Windows. It captures live audi
 - DSP runs inside cpal's audio callbacks (real-time threads): no allocations, no locks/mutexes, no file/network I/O, no `println!` — any of these cause glitches
 - Device enumeration/selection happens on the GUI thread (startup, or on Refresh), never inside the callback
 - Capture and render callbacks run on separate threads and communicate only via the lock-free SPSC ring (`src/spsc.rs`) and `Arc<AtomicU32>` peak meters
+- The GUI thread talks to the capture callback only through `Arc<AtomicU32>` values (peak meters in, the NR-amount `f32`-bits out); the callback reads the NR amount with a `Relaxed` load once per 480-sample frame
 - All DSP state (DenoiseState, biquads, frame accumulators, ring, resampler buffers) is allocated on the GUI thread at Start and moved into the stream closures
 
 ## Conventions
