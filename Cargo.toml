@@ -7,7 +7,17 @@ description = "Real-time noise filter for ham radio SSB voice (RNNoise + bandpas
 
 [dependencies]
 cpal = "0.18"
-eframe = "0.36"
+# glow (OpenGL) instead of the default wgpu (Vulkan): Intel Vulkan drivers
+# crash on some machines, OpenGL is the maximally-compatible path
+eframe = { version = "0.36", default-features = false, features = [
+    "accesskit",
+    "default_fonts",
+    "glow",
+    "links",
+    "wayland",
+    "web_screen_reader",
+    "x11",
+] }
 egui = "0.36"
 nnnoiseless = { version = "0.5.2", default-features = false }
 

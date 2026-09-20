@@ -7,7 +7,7 @@ Real-time noise filter for ham radio SSB voice on Windows. It captures live audi
 - Rust (rustup `stable`, 1.98 at scaffold time, x86_64-pc-windows-msvc), builds a single Windows `.exe`
 - Release build: `cargo build --release` (binary in `target\release\`)
 - Fast feedback: `cargo check`; lint: `cargo clippy`; tests: `cargo test`
-- `cpal 0.18` for audio I/O (WASAPI backend), `egui`/`eframe 0.36` for the GUI
+- `cpal 0.18` for audio I/O (WASAPI backend), `egui`/`eframe 0.36` for the GUI — deliberately the `glow` (OpenGL) renderer instead of eframe's default `wgpu` (Vulkan): some Intel Vulkan drivers crash at startup on other people's machines
 - Noise reduction: `nnnoiseless 0.5.2` (pure-Rust port of Xiph's RNNoise, BSD-3); with `default-features = false` its only deps are `easyfft` + `once_cell`
 - Pre-filter: homegrown 2nd-order biquad bandpass (HP 300 Hz + LP 3 kHz, RBJ cookbook coefficients, direct form II transposed) in `src/biquad.rs`
 - Output rate: homegrown streaming linear-interpolation resampler (`src/resampler.rs`), used on the render path when the output device's mix rate is not 48 kHz
