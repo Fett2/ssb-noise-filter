@@ -10,6 +10,7 @@ use nnnoiseless::DenoiseState;
 
 use crate::biquad::Biquad;
 use crate::resampler::Resampler;
+use crate::rigctl::{self, Rigctl};
 use crate::spsc::SpscRing;
 
 /// RNNoise works at 48 kHz in frames of 480 samples (10 ms).
@@ -52,6 +53,9 @@ pub struct Engine {
     /// band-passed original). Published by the GUI, read per frame by the
     /// capture callback.
     pub nr_amount: Arc<AtomicU32>,
+    /// Rig PTT via rigctld; the poller thread updates `rig.ptt` and the
+    /// capture callback bypasses the denoiser while the rig is keyed.
+    pub rig: Rigctl,
     pub display_in: f32,
     pub display_out: f32,
     running: Option<Running>,
@@ -67,6 +71,8 @@ impl Engine {
         let device_names = devices.iter().map(name_of).collect();
         let input_idx = default_index(&devices, host.default_input_device().as_ref());
         let output_idx = default_index(&devices, host.default_output_device().as_ref());
+        let rig = Rigctl::new();
+        rig.spawn_poller();
         Self {
             host,
             devices,
@@ -77,6 +83,7 @@ impl Engine {
             in_peak: Arc::new(AtomicU32::new(0.0f32.to_bits())),
             out_peak: Arc::new(AtomicU32::new(0.0f32.to_bits())),
             nr_amount: Arc::new(AtomicU32::new(0.8f32.to_bits())),
+            rig,
             display_in: 0.0,
             display_out: 0.0,
             running: None,
@@ -135,6 +142,7 @@ impl Engine {
         let in_peak = Arc::clone(&self.in_peak);
         let out_peak = Arc::clone(&self.out_peak);
         let nr_amount = Arc::clone(&self.nr_amount);
+        let ptt = Arc::clone(&self.rig.ptt);
 
         // All DSP state is created on the GUI thread and moved into the
         // real-time capture closure.
@@ -169,8 +177,16 @@ impl Engine {
                         // original (both still in i16 range), then scale back
                         // to [-1, 1]. RNNoise's per-band gain snaps then only
                         // move the output by the wet fraction, and signals the
-                        // RNN crushes keep a stable floor.
-                        let wet = f32::from_bits(nr_amount.load(Ordering::Relaxed));
+                        // RNN crushes keep a stable floor. While the rig is
+                        // keyed the wet fraction drops to 0 (pure band-pass
+                        // through) so the RNN doesn't gain-ride our own
+                        // transmitted voice; it keeps being fed, so it is
+                        // warm when the key drops.
+                        let wet = if rigctl::is_keyed(ptt.load(Ordering::Relaxed)) {
+                            0.0
+                        } else {
+                            f32::from_bits(nr_amount.load(Ordering::Relaxed))
+                        };
                         for (out, &x) in frame.iter_mut().zip(acc[..FRAME].iter()) {
                             *out = (*out * wet + x * (1.0 - wet)) / I16_SCALE;
                         }
