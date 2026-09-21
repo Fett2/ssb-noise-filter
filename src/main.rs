@@ -6,6 +6,7 @@ mod app;
 mod biquad;
 mod resampler;
 mod rigctl;
+mod settings;
 mod spsc;
 
 use std::sync::atomic::Ordering;
@@ -38,11 +39,19 @@ struct FilterApp {
 
 impl FilterApp {
     fn new() -> Self {
-        Self {
+        let settings = settings::Settings::load();
+        let app = Self {
             engine: Engine::new(),
-            rig_host: "localhost".into(),
-            rig_port: "4532".into(),
+            rig_host: settings.rig_host,
+            rig_port: settings.rig_port,
+        };
+        // The app was connected when it last exited -> connect again.
+        if settings.rig_connected {
+            if let Ok(port) = app.rig_port.parse::<u16>() {
+                app.engine.rig.connect_to(&app.rig_host, port);
+            }
         }
+        app
     }
 }
 
@@ -126,7 +135,10 @@ impl eframe::App for FilterApp {
             ui.horizontal(|ui| {
                 if ui.button("Connect").clicked() {
                     match rig_port.trim().parse::<u16>() {
-                        Ok(port) => engine.rig.connect_to(rig_host.trim(), port),
+                        Ok(port) => {
+                            engine.rig.connect_to(rig_host.trim(), port);
+                            save_rig_settings(engine, rig_host.trim(), rig_port.trim(), true);
+                        }
                         Err(_) => {
                             engine.error = Some("port must be a number, e.g. 4532".into())
                         }
@@ -134,6 +146,7 @@ impl eframe::App for FilterApp {
                 }
                 if ui.button("Disconnect").clicked() {
                     engine.rig.disconnect();
+                    save_rig_settings(engine, rig_host.trim(), rig_port.trim(), false);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let state = engine.rig.ptt.load(Ordering::Relaxed);
@@ -186,4 +199,17 @@ fn meter(ui: &mut egui::Ui, label: &str, level: f32) {
         ui.add(egui::ProgressBar::new(level));
         ui.label(format!("{db:5.1} dB"));
     });
+}
+
+/// Persist the rigctld endpoint (and whether we are connected) so it
+/// survives a restart; a file error goes to the GUI error line.
+fn save_rig_settings(engine: &mut Engine, host: &str, port: &str, connected: bool) {
+    let s = settings::Settings {
+        rig_host: host.to_owned(),
+        rig_port: port.to_owned(),
+        rig_connected: connected,
+    };
+    if let Err(e) = s.save() {
+        engine.error = Some(e);
+    }
 }

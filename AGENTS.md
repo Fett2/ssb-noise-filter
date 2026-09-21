@@ -12,6 +12,7 @@ Real-time noise filter for ham radio SSB voice on Windows. It captures live audi
 - Pre-filter: homegrown 2nd-order biquad bandpass (HP 300 Hz + LP 3 kHz, RBJ cookbook coefficients, direct form II transposed) in `src/biquad.rs`
 - Output rate: homegrown streaming linear-interpolation resampler (`src/resampler.rs`), used on the render path when the output device's mix rate is not 48 kHz
 - Rig PTT: homegrown minimal rigctld TCP client + background poller thread (`src/rigctl.rs`), std-only (no new deps)
+- Settings: homegrown std-only `key=value` file at `%APPDATA%\SSB Noise Filter\config.ini` (`src/settings.rs`), remembers the rigctld endpoint and connection state (no serde)
 
 ## Decided: noise reduction approach
 - RNNoise (recurrent neural net, 48 kHz, 480-sample = 10 ms frames) via `nnnoiseless`, low-level `DenoiseState` API
@@ -27,6 +28,7 @@ Real-time noise filter for ham radio SSB voice on Windows. It captures live audi
 - A detached poller thread keeps a TCP connection to a rigctld server (rigctld "default" protocol: no banner, no ACK; the short command `t\n` answers a bare PTT state `0` RX / `1` TX / `2` TX mic / `3` TX data, or `RPRT <n>` when the rig errors) — polled every 100 ms, reconnecting every 1 s while a target is set; a dead link (timeout/close/malformed line) drops the connection and sets state to `DISCONNECTED` (255)
 - The PTT state is published as `Arc<AtomicU8>`; the capture callback forces the NR blend to 0 while the rig is keyed (1–3), so our own transmitted voice is not gain-ridged by the RNN. `process_frame` keeps running while keyed so the RNN stays warm (no fade-in when the key drops); `DISCONNECTED` falls back to the GUI slider value
 - A `RPRT` answer (rig error) keeps the last PTT state; the GUI has editable host/port (default `localhost:4532`) with Connect/Disconnect, a colored RX/TX indicator, and the poller's status line
+- The host/port and connection state persist to `%APPDATA%\SSB Noise Filter\config.ini` (std-only `key=value`, no serde) — saved when Connect/Disconnect is clicked, restored at startup, which auto-reconnects to the saved endpoint if the app was connected when it last exited
 - v1 is poll-only (state in); keying the rig from the GUI (`T 0/1`) is a likely follow-up
 
 ## Real-time audio gotchas
