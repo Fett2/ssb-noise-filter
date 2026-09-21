@@ -103,6 +103,14 @@ impl eframe::App for FilterApp {
             }
             ui.small("Blends the denoised signal with the raw band-passed one: lower it to soften pops and keep weak signals; 100% is full RNNoise.");
             ui.add_space(4.0);
+            let mut vol = f32::from_bits(engine.out_gain.load(Ordering::Relaxed)) * 100.0;
+            if ui
+                .add(egui::Slider::new(&mut vol, 0.0..=100.0).text("Output volume").suffix("%"))
+                .changed()
+            {
+                engine.out_gain.store((vol / 100.0).to_bits(), Ordering::Relaxed);
+            }
+            ui.add_space(4.0);
             meter(ui, "In", engine.display_in);
             meter(ui, "Out", engine.display_out);
 

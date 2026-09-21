@@ -59,6 +59,9 @@ pub struct Engine {
     /// band-passed original). Published by the GUI, read per frame by the
     /// capture callback.
     pub nr_amount: Arc<AtomicU32>,
+    /// 0.0-1.0: gain applied to the samples written to the output device.
+    /// Published by the GUI, read by the render callback.
+    pub out_gain: Arc<AtomicU32>,
     /// Rig PTT via rigctld; the poller thread updates `rig.ptt` and the
     /// capture callback bypasses the denoiser while the rig is keyed.
     pub rig: Rigctl,
@@ -89,6 +92,7 @@ impl Engine {
             in_peak: Arc::new(AtomicU32::new(0.0f32.to_bits())),
             out_peak: Arc::new(AtomicU32::new(0.0f32.to_bits())),
             nr_amount: Arc::new(AtomicU32::new(0.8f32.to_bits())),
+            out_gain: Arc::new(AtomicU32::new(1.0f32.to_bits())),
             rig,
             display_in: 0.0,
             display_out: 0.0,
@@ -148,6 +152,7 @@ impl Engine {
         let in_peak = Arc::clone(&self.in_peak);
         let out_peak = Arc::clone(&self.out_peak);
         let nr_amount = Arc::clone(&self.nr_amount);
+        let out_gain = Arc::clone(&self.out_gain);
         let ptt = Arc::clone(&self.rig.ptt);
 
         // All DSP state is created on the GUI thread and moved into the
@@ -220,13 +225,14 @@ impl Engine {
             out_device.build_output_stream(
                 out_config,
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    let gain = f32::from_bits(out_gain.load(Ordering::Relaxed));
                     // Duplicate each popped mono sample into every channel.
                     let frames = data.len() / out_ch;
                     let n = frames.min(mono_buf.len());
                     let n = ring_for_render.pop(&mut mono_buf[..n]);
                     for i in 0..frames {
                         let v = if i < n {
-                            mono_buf[i]
+                            mono_buf[i] * gain
                         } else {
                             0.0
                         };
@@ -250,6 +256,7 @@ impl Engine {
             out_device.build_output_stream(
                 out_config,
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    let gain = f32::from_bits(out_gain.load(Ordering::Relaxed));
                     let frames = data.len() / out_ch;
                     mono_buf[..frames].fill(0.0);
                     // Source samples this callback's output will need,
@@ -265,7 +272,7 @@ impl Engine {
                     let consumed = res.process(&pending, &mut mono_buf[..frames]);
                     pending.drain(..consumed);
                     for i in 0..frames {
-                        let v = mono_buf[i];
+                        let v = mono_buf[i] * gain;
                         for c in 0..out_ch {
                             data[i * out_ch + c] = v;
                         }
