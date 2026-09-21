@@ -34,6 +34,7 @@ Real-time noise filter for ham radio SSB voice on Windows. It captures live audi
 - Capture and render callbacks run on separate threads and communicate only via the lock-free SPSC ring (`src/spsc.rs`) and `Arc<AtomicU32>` peak meters
 - The GUI thread talks to the capture callback only through atomics: `Arc<AtomicU32>` peak meters in, the NR-amount `f32`-bits and the `Arc<AtomicU8>` rig PTT state out; the callback reads the NR amount and PTT with a `Relaxed` load once per 480-sample frame (no mutexes in the callback)
 - All DSP state (DenoiseState, biquads, frame accumulators, ring, resampler buffers) is allocated on the GUI thread at Start and moved into the stream closures
+- Both streams use a small fixed shared-mode buffer (`BUFFER_FRAMES`, 960 frames ≈ 20 ms), not `BufferSize::Default`: the engine default can be far larger, and the render engine keeps its ring buffer full, so buffer depth is the heard echo latency (the callback period is always the engine's own, 10 ms at 48 kHz, regardless)
 
 ## Conventions
 - Conventional commits (`feat:`, `fix:`, `refactor:`, `chore:`)

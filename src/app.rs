@@ -18,6 +18,12 @@ const SAMPLE_RATE: u32 = 48_000;
 const FRAME: usize = DenoiseState::FRAME_SIZE;
 /// Ring capacity: 8192 samples ~ 170 ms of headroom between the two threads.
 const RING_SAMPLES: usize = 8_192;
+/// Shared-mode stream buffer: two 48 kHz engine periods (20 ms). The render
+/// engine keeps its ring buffer full, so buffer depth is extra latency; the
+/// engine default can be far larger. Shared-mode `Initialize` accepts any
+/// positive duration — the callback period is always the engine's own (10 ms
+/// at 48 kHz) — and this value only sets ring-buffer latency.
+const BUFFER_FRAMES: u32 = 960;
 /// RNNoise expects/produces f32 samples in the i16 PCM range, not [-1, 1].
 const I16_SCALE: f32 = 32_768.0;
 /// SSB voice band.
@@ -294,7 +300,8 @@ impl Engine {
 /// (shared mode rejects anything else). Input must be 48 kHz (RNNoise); the
 /// output may run at any rate, the render callback resamples it. Input
 /// channels are averaged to mono, the mono output is duplicated across the
-/// output channels.
+/// output channels. The buffer is a small fixed size (not the engine
+/// default), which is what keeps the echo latency down.
 fn stream_config(device: &cpal::Device, is_input: bool) -> Result<cpal::StreamConfig, String> {
     let name = device.to_string();
     let mix = if is_input {
@@ -318,7 +325,7 @@ fn stream_config(device: &cpal::Device, is_input: bool) -> Result<cpal::StreamCo
     Ok(cpal::StreamConfig {
         channels: mix.channels(),
         sample_rate: mix.sample_rate(),
-        buffer_size: cpal::BufferSize::Default,
+        buffer_size: cpal::BufferSize::Fixed(BUFFER_FRAMES),
     })
 }
 
