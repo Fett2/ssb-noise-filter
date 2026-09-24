@@ -20,6 +20,9 @@ eframe = { version = "0.36", default-features = false, features = [
 ] }
 egui = "0.36"
 nnnoiseless = { version = "0.5.2", default-features = false }
+# already a transitive dep of nnnoiseless (same feature set); direct dep for
+# the per-band spectral blend (960-pt FFT/IFFT, const-generics API)
+easyfft = "0.4"
 
 [profile.release]
 opt-level = 3

@@ -9,6 +9,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use nnnoiseless::DenoiseState;
 
 use crate::biquad::Biquad;
+use crate::perband::PerBand;
 use crate::resampler::Resampler;
 use crate::rigctl::{self, Rigctl};
 use crate::spsc::SpscRing;
@@ -24,8 +25,6 @@ const RING_SAMPLES: usize = 8_192;
 /// positive duration — the callback period is always the engine's own (10 ms
 /// at 48 kHz) — and this value only sets ring-buffer latency.
 const BUFFER_FRAMES: u32 = 960;
-/// RNNoise expects/produces f32 samples in the i16 PCM range, not [-1, 1].
-const I16_SCALE: f32 = 32_768.0;
 /// SSB voice band.
 const HP_FREQ: f64 = 300.0;
 const LP_FREQ: f64 = 3_000.0;
@@ -157,12 +156,10 @@ impl Engine {
 
         // All DSP state is created on the GUI thread and moved into the
         // real-time capture closure.
-        let mut den = DenoiseState::new();
+        let mut perband = PerBand::new();
         let mut hp = Biquad::highpass(HP_FREQ, SAMPLE_RATE as f64, Q);
         let mut lp = Biquad::lowpass(LP_FREQ, SAMPLE_RATE as f64, Q);
         let mut acc: Vec<f32> = Vec::with_capacity(FRAME * 4);
-        let mut frame = vec![0.0f32; FRAME];
-        let mut first_frame = true;
         let ring_for_render = Arc::clone(&ring);
         let in_stream = in_device
             .build_input_stream(
@@ -180,32 +177,20 @@ impl Engine {
                         acc.push(lp.process(hp.process(s / in_ch as f32)));
                     }
                     while acc.len() >= FRAME {
-                        for x in &mut acc[..FRAME] {
-                            *x *= I16_SCALE;
-                        }
-                        let _ = den.process_frame(&mut frame, &acc[..FRAME]);
-                        // Blend the denoised frame with the band-passed
-                        // original (both still in i16 range), then scale back
-                        // to [-1, 1]. RNNoise's per-band gain snaps then only
-                        // move the output by the wet fraction, and signals the
-                        // RNN crushes keep a stable floor. While the rig is
-                        // keyed the wet fraction drops to 0 (pure band-pass
-                        // through) so the RNN doesn't gain-ride our own
-                        // transmitted voice; it keeps being fed, so it is
-                        // warm when the key drops.
-                        let wet = if rigctl::is_keyed(ptt.load(Ordering::Relaxed)) {
+                        // The per-band stage owns the RNN and returns the
+                        // completed (previous) frame, blended per 50 Hz
+                        // band. While the rig is keyed the wet fraction
+                        // drops to 0 (pure band-pass through) so the RNN
+                        // doesn't gain-ride our own transmitted voice; it
+                        // keeps being fed, so it is warm when the key drops.
+                        let keyed = rigctl::is_keyed(ptt.load(Ordering::Relaxed));
+                        let wet = if keyed {
                             0.0
                         } else {
                             f32::from_bits(nr_amount.load(Ordering::Relaxed))
                         };
-                        for (out, &x) in frame.iter_mut().zip(acc[..FRAME].iter()) {
-                            *out = (*out * wet + x * (1.0 - wet)) / I16_SCALE;
-                        }
-                        if first_frame {
-                            // Discard RNNoise's first frame (fade-in artifact).
-                            first_frame = false;
-                        } else {
-                            ring.push(&frame);
+                        if let Some(frame) = perband.process(acc[..FRAME].try_into().unwrap(), wet, keyed) {
+                            ring.push(frame);
                         }
                         acc.drain(..FRAME);
                     }
