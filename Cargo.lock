@@ -2930,7 +2930,6 @@ name = "ssb-noise-filter"
 version = "0.1.0"
 dependencies = [
  "cpal",
- "easyfft",
  "eframe",
  "egui",
  "nnnoiseless",

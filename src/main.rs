@@ -4,7 +4,6 @@
 
 mod app;
 mod biquad;
-mod perband;
 mod resampler;
 mod rigctl;
 mod settings;
