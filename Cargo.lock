@@ -2929,6 +2929,7 @@ dependencies = [
 name = "ssb-noise-filter"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "cpal",
  "eframe",
  "egui",

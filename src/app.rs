@@ -2,13 +2,14 @@
 //! Everything here is set up on the GUI thread; the real-time callbacks only
 //! touch pre-allocated state.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 use std::sync::Arc;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use nnnoiseless::DenoiseState;
 
 use crate::biquad::Biquad;
+use crate::nr2::{self, Nr2};
 use crate::resampler::Resampler;
 use crate::rigctl::{self, Rigctl};
 use crate::spsc::SpscRing;
@@ -59,6 +60,10 @@ pub struct Engine {
     /// band-passed original). Published by the GUI, read per frame by the
     /// capture callback.
     pub nr_amount: Arc<AtomicU32>,
+    /// Selected filter engine: 0 = RNNoise, 1 = NR2 (`nr2::ENGINE_*`).
+    /// Published by the GUI (Filter dropdown), read per block by the
+    /// capture callback.
+    pub filter: Arc<AtomicU8>,
     /// 0.0-1.0: gain applied to the samples written to the output device.
     /// Published by the GUI, read by the render callback.
     pub out_gain: Arc<AtomicU32>,
@@ -92,6 +97,7 @@ impl Engine {
             in_peak: Arc::new(AtomicU32::new(0.0f32.to_bits())),
             out_peak: Arc::new(AtomicU32::new(0.0f32.to_bits())),
             nr_amount: Arc::new(AtomicU32::new(0.8f32.to_bits())),
+            filter: Arc::new(AtomicU8::new(nr2::ENGINE_RNNOISE)),
             out_gain: Arc::new(AtomicU32::new(1.0f32.to_bits())),
             rig,
             display_in: 0.0,
@@ -155,14 +161,45 @@ impl Engine {
         let out_gain = Arc::clone(&self.out_gain);
         let ptt = Arc::clone(&self.rig.ptt);
 
+        let filter = Arc::clone(&self.filter);
+
         // All DSP state is created on the GUI thread and moved into the
-        // real-time capture closure.
+        // real-time capture closure. Both engines are fed every sample and
+        // stay warm; only the selected engine's output reaches the ring, so
+        // switching is instant.
         let mut den = DenoiseState::new();
+        let mut nr2 = Nr2::new();
         let mut hp = Biquad::highpass(HP_FREQ, SAMPLE_RATE as f64, Q);
         let mut lp = Biquad::lowpass(LP_FREQ, SAMPLE_RATE as f64, Q);
-        let mut acc: Vec<f32> = Vec::with_capacity(FRAME * 4);
-        let mut frame = vec![0.0f32; FRAME];
-        let mut first_frame = true;
+        // Band-passed input samples ([-1, 1]) not yet consumed by an engine
+        // path. The paths run on different block boundaries (RNNoise frames
+        // vs NR2 hops), so each keeps its own consumed index into this
+        // buffer.
+        let mut acc: Vec<f32> = Vec::with_capacity(4 * FRAME);
+        let mut rn_consumed: u64 = 0;
+        let mut nr_consumed: u64 = 0;
+        let mut frame = vec![0.0f32; FRAME];        // RNNoise output (i16 range)
+        let mut frame_nr2 = vec![0.0f32; nr2::HOP]; // NR2 output (i16 range)
+        let mut rn_in = vec![0.0f32; FRAME];        // i16-scaled copy for RNNoise
+        let mut nr_in = vec![0.0f32; nr2::HOP];     // i16-scaled copy for NR2
+        // Raw side of the NR2 blend: the engine's output is delayed by
+        // nr2::DELAY samples, so it is blended with the band-passed input
+        // from that far back. This history holds the last DELAY scaled
+        // input samples; `nr_hist_pos` indexes the oldest one.
+        let mut nr_hist: Vec<f32> = vec![0.0f32; nr2::DELAY];
+        let mut nr_hist_pos: usize = 0;
+        // Blended output block; also holds the switch-gap silence, which
+        // is filled in push_buf-sized chunks: the worst-case gap,
+        // switching away from RNNoise, is < 2*FRAME + HOP samples (the
+        // ring tail can lag total_in by one unpushed block plus the
+        // engine's boundary phase, and the new engine's next boundary is
+        // up to one of its blocks ahead of total_in).
+        let mut push_buf = vec![0.0f32; FRAME + nr2::HOP];
+        let mut first_push = true;
+        let mut last_filter = filter.load(Ordering::Relaxed);
+        let mut prev_keyed = rigctl::is_keyed(self.rig.ptt.load(Ordering::Relaxed));
+        let mut total_in: u64 = 0; // stream position: samples received
+        let mut ring_pos: u64 = 0; // stream position at the tail of the ring
         let ring_for_render = Arc::clone(&ring);
         let in_stream = in_device
             .build_input_stream(
@@ -179,35 +216,125 @@ impl Engine {
                         }
                         acc.push(lp.process(hp.process(s / in_ch as f32)));
                     }
-                    while acc.len() >= FRAME {
-                        for x in &mut acc[..FRAME] {
-                            *x *= I16_SCALE;
-                        }
-                        let _ = den.process_frame(&mut frame, &acc[..FRAME]);
-                        // Blend the denoised frame with the band-passed
-                        // original (both still in i16 range), then scale back
-                        // to [-1, 1]. RNNoise's per-band gain snaps then only
-                        // move the output by the wet fraction, and signals the
-                        // RNN crushes keep a stable floor. While the rig is
-                        // keyed the wet fraction drops to 0 (pure band-pass
-                        // through) so the RNN doesn't gain-ride our own
-                        // transmitted voice; it keeps being fed, so it is
-                        // warm when the key drops.
-                        let wet = if rigctl::is_keyed(ptt.load(Ordering::Relaxed)) {
-                            0.0
+                    total_in += (data.len() / in_ch) as u64;
+
+                    // A filter switch jumps the ring's head to the new
+                    // engine's next block boundary; fill the gap with
+                    // silence so the timeline stays continuous. The gap
+                    // can span up to two blocks of the old engine plus one
+                    // of the new, so fill it in push_buf-sized chunks —
+                    // the RT thread must never panic on a slice index.
+                    let cur_filter = filter.load(Ordering::Relaxed);
+                    if cur_filter != last_filter {
+                        last_filter = cur_filter;
+                        let block = if cur_filter == nr2::ENGINE_NR2 {
+                            nr2::HOP
                         } else {
-                            f32::from_bits(nr_amount.load(Ordering::Relaxed))
+                            FRAME
                         };
-                        for (out, &x) in frame.iter_mut().zip(acc[..FRAME].iter()) {
-                            *out = (*out * wet + x * (1.0 - wet)) / I16_SCALE;
+                        let next_boundary = (total_in / block as u64 + 1) * block as u64;
+                        debug_assert!(next_boundary >= ring_pos);
+                        let mut gap = next_boundary.saturating_sub(ring_pos) as usize;
+                        while gap > 0 {
+                            let n = gap.min(push_buf.len());
+                            push_buf[..n].fill(0.0);
+                            ring.push(&push_buf[..n]);
+                            gap -= n;
                         }
-                        if first_frame {
-                            // Discard RNNoise's first frame (fade-in artifact).
-                            first_frame = false;
-                        } else {
-                            ring.push(&frame);
+                        ring_pos = next_boundary;
+                    }
+
+                    // While the rig is keyed the wet fraction drops to 0
+                    // (pure band-pass through) so the engines don't
+                    // gain-ride our own transmitted voice; both keep being
+                    // fed, so they are warm when the key drops. On the
+                    // TX→RX edge, flush NR2's stale overlap-add ring but
+                    // keep its converged noise estimate (AetherSDR's own
+                    // pattern).
+                    let keyed = rigctl::is_keyed(ptt.load(Ordering::Relaxed));
+                    if prev_keyed && !keyed {
+                        nr2.reset_transient();
+                    }
+                    prev_keyed = keyed;
+                    let wet = if keyed {
+                        0.0
+                    } else {
+                        f32::from_bits(nr_amount.load(Ordering::Relaxed))
+                    };
+
+                    // The selected engine's blended block is pushed:
+                    // wet·denoised + (1−wet)·raw, both in i16 range, scaled
+                    // back to [-1, 1]. The raw floor damps the engine's gain
+                    // snaps and keeps a floor under weak signals. The first
+                    // pushed block is discarded (startup fade-in artifact).
+
+                    // RNNoise path: 480-sample frames (its native size).
+                    while (acc.len() as u64) >= rn_consumed + FRAME as u64 {
+                        let start = rn_consumed as usize;
+                        for (x, &s) in rn_in.iter_mut().zip(&acc[start..start + FRAME]) {
+                            *x = s * I16_SCALE;
                         }
-                        acc.drain(..FRAME);
+                        let _ = den.process_frame(&mut frame, &rn_in);
+                        if cur_filter == nr2::ENGINE_RNNOISE {
+                            for k in 0..FRAME {
+                                push_buf[k] =
+                                    (frame[k] * wet + rn_in[k] * (1.0 - wet)) / I16_SCALE;
+                            }
+                            if first_push {
+                                first_push = false;
+                            } else {
+                                ring.push(&push_buf[..FRAME]);
+                            }
+                            ring_pos += FRAME as u64;
+                        }
+                        rn_consumed += FRAME as u64;
+                    }
+
+                    // NR2 path: exactly hop-sized calls (its overlap-add
+                    // must be driven at the hop cadence).
+                    while (acc.len() as u64) >= nr_consumed + nr2::HOP as u64 {
+                        let start = nr_consumed as usize;
+                        for (x, &s) in
+                            nr_in.iter_mut().zip(&acc[start..start + nr2::HOP])
+                        {
+                            *x = s * I16_SCALE;
+                        }
+                        nr2.process(&nr_in, &mut frame_nr2);
+                        if cur_filter == nr2::ENGINE_NR2 {
+                            // The engine's output here is the processed
+                            // version of the hop two back (its
+                            // nr2::DELAY-sample OLA delay), so the raw side
+                            // of the blend is that same hop — the oldest
+                            // half of the history, before this hop
+                            // overwrites it.
+                            for k in 0..nr2::HOP {
+                                let raw = nr_hist[(nr_hist_pos + k) % nr_hist.len()];
+                                push_buf[k] =
+                                    (frame_nr2[k] * wet + raw * (1.0 - wet))
+                                        / I16_SCALE;
+                            }
+                            if first_push {
+                                first_push = false;
+                            } else {
+                                ring.push(&push_buf[..nr2::HOP]);
+                            }
+                            ring_pos += nr2::HOP as u64;
+                        }
+                        // Record this hop at the tail of the history.
+                        for (i, &s) in nr_in.iter().enumerate() {
+                            let idx = (nr_hist_pos + i) % nr_hist.len();
+                            nr_hist[idx] = s;
+                        }
+                        nr_hist_pos = (nr_hist_pos + nr2::HOP) % nr_hist.len();
+                        nr_consumed += nr2::HOP as u64;
+                    }
+
+                    // Drop the prefix both paths have consumed.
+                    let done = rn_consumed.min(nr_consumed) as usize;
+                    if done > 0 {
+                        acc.drain(..done);
+                        rn_consumed -= done as u64;
+                        nr_consumed -= done as u64;
                     }
                 },
                 |err| eprintln!("capture error: {err}"),

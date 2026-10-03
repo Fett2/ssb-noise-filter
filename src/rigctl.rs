@@ -72,6 +72,11 @@ impl Rigctl {
     pub fn disconnect(&self) {
         *self.target.lock().unwrap() = None;
     }
+
+    /// Whether an endpoint is currently being tracked (GUI thread only).
+    pub fn has_target(&self) -> bool {
+        self.target.lock().unwrap().is_some()
+    }
 }
 
 fn poll_loop(ptt: &AtomicU8, target: &Mutex<Option<(String, u16)>>, message: &Mutex<String>) {

@@ -4,6 +4,7 @@
 
 mod app;
 mod biquad;
+mod nr2;
 mod resampler;
 mod rigctl;
 mod settings;
@@ -45,6 +46,8 @@ impl FilterApp {
             rig_host: settings.rig_host,
             rig_port: settings.rig_port,
         };
+        // Restore the last-selected filter engine.
+        app.engine.filter.store(settings.filter, Ordering::Relaxed);
         // The app was connected when it last exited -> connect again.
         if settings.rig_connected {
             if let Ok(port) = app.rig_port.parse::<u16>() {
@@ -76,12 +79,14 @@ impl eframe::App for FilterApp {
         CentralPanel::default().show(ui, |ui| {
             ui.heading("SSB Noise Filter");
             ui.add_space(4.0);
-            ui.label("RNNoise + 300 Hz - 3 kHz bandpass; 48 kHz core, output resampled as needed");
+            ui.label("RNNoise / NR2 + 300 Hz - 3 kHz bandpass; 48 kHz core, output resampled as needed");
             ui.add_space(8.0);
 
             dropdown(ui, "Input (mic)", &engine.device_names, &mut engine.input_idx);
             ui.add_space(4.0);
             dropdown(ui, "Output (speaker)", &engine.device_names, &mut engine.output_idx);
+            ui.add_space(4.0);
+            filter_dropdown(ui, engine, rig_host, rig_port);
             ui.add_space(8.0);
 
             ui.horizontal(|ui| {
@@ -110,7 +115,7 @@ impl eframe::App for FilterApp {
             {
                 engine.nr_amount.store((pct / 100.0).to_bits(), Ordering::Relaxed);
             }
-            ui.small("Blends the denoised signal with the raw band-passed one: lower it to soften pops and keep weak signals; 100% is full RNNoise.");
+            ui.small("Blends the denoised signal with the raw band-passed one: lower it to soften pops and keep weak signals; 100% is the full denoiser (selected engine).");
             ui.add_space(4.0);
             let mut vol = f32::from_bits(engine.out_gain.load(Ordering::Relaxed)) * 100.0;
             if ui
@@ -137,7 +142,7 @@ impl eframe::App for FilterApp {
                     match rig_port.trim().parse::<u16>() {
                         Ok(port) => {
                             engine.rig.connect_to(rig_host.trim(), port);
-                            save_rig_settings(engine, rig_host.trim(), rig_port.trim(), true);
+                            save_settings(engine, rig_host.trim(), rig_port.trim(), true);
                         }
                         Err(_) => {
                             engine.error = Some("port must be a number, e.g. 4532".into())
@@ -146,7 +151,7 @@ impl eframe::App for FilterApp {
                 }
                 if ui.button("Disconnect").clicked() {
                     engine.rig.disconnect();
-                    save_rig_settings(engine, rig_host.trim(), rig_port.trim(), false);
+                    save_settings(engine, rig_host.trim(), rig_port.trim(), false);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let state = engine.rig.ptt.load(Ordering::Relaxed);
@@ -201,13 +206,29 @@ fn meter(ui: &mut egui::Ui, label: &str, level: f32) {
     });
 }
 
-/// Persist the rigctld endpoint (and whether we are connected) so it
-/// survives a restart; a file error goes to the GUI error line.
-fn save_rig_settings(engine: &mut Engine, host: &str, port: &str, connected: bool) {
+const FILTER_NAMES: [&str; 2] = ["RNNoise", "NR2 (spectral)"];
+
+/// Filter (engine) selection; persists the choice when it changes.
+fn filter_dropdown(ui: &mut egui::Ui, engine: &mut Engine, rig_host: &str, rig_port: &str) {
+    let mut idx = engine.filter.load(Ordering::Relaxed) as usize;
+    let before = idx;
+    egui::ComboBox::from_label("Filter")
+        .show_index(ui, &mut idx, FILTER_NAMES.len(), |i| FILTER_NAMES[i]);
+    if idx != before {
+        engine.filter.store(idx as u8, Ordering::Relaxed);
+        save_settings(engine, rig_host.trim(), rig_port.trim(), engine.rig.has_target());
+    }
+}
+
+/// Persist the rigctld endpoint, the connection state and the selected
+/// filter engine so they survive a restart; a file error goes to the GUI
+/// error line.
+fn save_settings(engine: &mut Engine, host: &str, port: &str, connected: bool) {
     let s = settings::Settings {
         rig_host: host.to_owned(),
         rig_port: port.to_owned(),
         rig_connected: connected,
+        filter: engine.filter.load(Ordering::Relaxed),
     };
     if let Err(e) = s.save() {
         engine.error = Some(e);

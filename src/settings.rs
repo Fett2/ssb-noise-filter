@@ -15,6 +15,8 @@ pub struct Settings {
     pub rig_port: String,
     /// Connect to the saved endpoint automatically at startup.
     pub rig_connected: bool,
+    /// Selected filter engine: 0 = RNNoise, 1 = NR2 (see `nr2::ENGINE_*`).
+    pub filter: u8,
 }
 
 impl Default for Settings {
@@ -23,6 +25,7 @@ impl Default for Settings {
             rig_host: DEFAULT_HOST.to_owned(),
             rig_port: DEFAULT_PORT.to_owned(),
             rig_connected: false,
+            filter: 0,
         }
     }
 }
@@ -44,10 +47,11 @@ impl Settings {
             fs::create_dir_all(dir).map_err(|e| format!("creating settings dir: {e}"))?;
         }
         let text = format!(
-            "rig_host={}\nrig_port={}\nrig_connected={}\n",
+            "rig_host={}\nrig_port={}\nrig_connected={}\nfilter={}\n",
             self.rig_host,
             self.rig_port,
-            u8::from(self.rig_connected)
+            u8::from(self.rig_connected),
+            self.filter
         );
         fs::write(&p, text).map_err(|e| format!("writing {}: {e}", p.display()))
     }
@@ -67,6 +71,8 @@ fn parse(text: &str) -> Settings {
             ("rig_port", v) if !v.is_empty() => s.rig_port = v.to_owned(),
             ("rig_connected", "1") => s.rig_connected = true,
             ("rig_connected", "0") => s.rig_connected = false,
+            ("filter", "1") => s.filter = 1,
+            ("filter", "0") => s.filter = 0,
             _ => {}
         }
     }
@@ -87,10 +93,11 @@ mod tests {
 
     #[test]
     fn parse_reads_all_keys() {
-        let s = parse("rig_host=rig.example.com\nrig_port=4533\nrig_connected=1\n");
+        let s = parse("rig_host=rig.example.com\nrig_port=4533\nrig_connected=1\nfilter=1\n");
         assert_eq!(s.rig_host, "rig.example.com");
         assert_eq!(s.rig_port, "4533");
         assert!(s.rig_connected);
+        assert_eq!(s.filter, 1);
     }
 
     #[test]
@@ -106,11 +113,12 @@ mod tests {
             rig_host: "192.0.2.10".to_owned(),
             rig_port: "4532".to_owned(),
             rig_connected: true,
+            filter: 1,
         };
         // save() writes the same format parse() reads.
         let text = format!(
-            "rig_host={}\nrig_port={}\nrig_connected={}\n",
-            s.rig_host, s.rig_port, u8::from(s.rig_connected)
+            "rig_host={}\nrig_port={}\nrig_connected={}\nfilter={}\n",
+            s.rig_host, s.rig_port, u8::from(s.rig_connected), s.filter
         );
         assert_eq!(parse(&text), s);
     }
