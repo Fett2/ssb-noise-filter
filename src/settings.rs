@@ -110,7 +110,7 @@ mod tests {
     #[test]
     fn round_trip_through_save_format() {
         let s = Settings {
-            rig_host: "192.0.2.10".to_owned(),
+            rig_host: "192.0.2.10".to_owned(), // RFC 5737 TEST-NET-1
             rig_port: "4532".to_owned(),
             rig_connected: true,
             filter: 1,

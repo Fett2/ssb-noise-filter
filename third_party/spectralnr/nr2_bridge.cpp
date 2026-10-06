@@ -1,4 +1,9 @@
-// extern "C" bridge over AetherSDR::SpectralNR, for the Rust wrapper.
+// extern "C" bridge over AetherSDR::SpectralNR, for the Rust wrapper
+// (src/nr2.rs).
+//
+// License: GNU GPL-3.0-or-later — see the LICENSE file at the repository root.
+// Wraps AetherSDR's SpectralNR (GPL-2.0-or-later for the WDSP-derived
+// portions, GPL-3.0-or-later for the adaptation; see SpectralNR.h).
 //
 // MSVC's C++ name mangling differs from Rust's `extern "C++"`, so the
 // class is wrapped in a small opaque-handle C API. All calls are thin
