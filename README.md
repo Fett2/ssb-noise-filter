@@ -3,8 +3,9 @@ This entire project is vibe coded.
 # SSB Noise Filter
 
 A real-time noise filter for ham radio SSB voice on Windows. It sits between
-your microphone and your speakers: it listens to the band, removes the white
-noise and static, and hands you clean voices back. The moment your radio keys
+a Windows audio input device and a Windows audio output device: it listens
+to the band, removes the white noise and static, and hands you clean voices
+back. The moment your radio keys
 up (PTT is polled from a rigctld server, e.g. WSJT-X's `rigctld-wsjtx.exe`),
 the filter steps out of the way, so what you transmit is exactly what you hear.
 
