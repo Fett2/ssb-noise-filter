@@ -51,6 +51,7 @@ Real-time noise filter for ham radio SSB voice on Windows. It captures live audi
 - Conventional commits (`feat:`, `fix:`, `refactor:`, `chore:`)
 - Commit and push only when the user explicitly asks — the user verifies sound on their own Windows machine (radio + rigctld) between builds; a successful build is not an approval
 - Run `cargo test` before committing
+- GitHub releases: tag scheme `v<major>.<minor>` (e.g. `v1.0`, `v2.0` — not `v2`), and **always** attach the precompiled Windows exe (`target/x86_64-pc-windows-gnu/release/ssb-noise-filter.exe`) as a release asset
 - CI on PR once a workflow is added
 
 ## Housekeeping
