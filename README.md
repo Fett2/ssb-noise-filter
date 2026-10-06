@@ -1,8 +1,6 @@
 ## *This entire project is vibe coded.*
 
-<img width="931" height="731" alt="image" src="https://github.com/user-attachments/assets/866e3f3f-6534-4c27-9c8b-b4e5ec8de197" />
-
-
+<img width="600" height="637" alt="image" src="https://github.com/user-attachments/assets/c9337674-5178-424e-858b-6df8ecb05134" />
 
 # SSB Noise Filter
 
