@@ -1,5 +1,9 @@
 ## *This entire project is vibe coded.*
 
+<img width="931" height="731" alt="image" src="https://github.com/user-attachments/assets/866e3f3f-6534-4c27-9c8b-b4e5ec8de197" />
+
+
+
 # SSB Noise Filter
 
 A real-time noise filter for ham radio SSB voice on Windows. It sits between
