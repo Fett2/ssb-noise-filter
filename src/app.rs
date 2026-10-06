@@ -301,17 +301,27 @@ impl Engine {
                         }
                         nr2.process(&nr_in, &mut frame_nr2);
                         if cur_filter == nr2::ENGINE_NR2 {
-                            // The engine's output here is the processed
-                            // version of the hop two back (its
-                            // nr2::DELAY-sample OLA delay), so the raw side
-                            // of the blend is that same hop — the oldest
-                            // half of the history, before this hop
-                            // overwrites it.
-                            for k in 0..nr2::HOP {
-                                let raw = nr_hist[(nr_hist_pos + k) % nr_hist.len()];
-                                push_buf[k] =
-                                    (frame_nr2[k] * wet + raw * (1.0 - wet))
-                                        / I16_SCALE;
+                            if keyed {
+                                // Bypass (wet = 0): push the current raw
+                                // with no OLA delay — there is no denoised
+                                // component to phase-align, so the TX
+                                // monitor matches RNNoise's latency exactly.
+                                for k in 0..nr2::HOP {
+                                    push_buf[k] = nr_in[k] / I16_SCALE;
+                                }
+                            } else {
+                                // The engine's output here is the processed
+                                // version of the hop two back (its
+                                // nr2::DELAY-sample OLA delay), so the raw
+                                // side of the blend is that same hop — the
+                                // oldest half of the history, before this
+                                // hop overwrites it.
+                                for k in 0..nr2::HOP {
+                                    let raw = nr_hist[(nr_hist_pos + k) % nr_hist.len()];
+                                    push_buf[k] =
+                                        (frame_nr2[k] * wet + raw * (1.0 - wet))
+                                            / I16_SCALE;
+                                }
                             }
                             if first_push {
                                 first_push = false;
@@ -359,7 +369,11 @@ impl Engine {
                     let n = ring_for_render.pop(&mut mono_buf[..n]);
                     for i in 0..frames {
                         let v = if i < n {
-                            mono_buf[i] * gain
+                            // Clamp: above 100% the gain exceeds unity and
+                            // can push samples past the +/-1.0 range WASAPI
+                            // expects, so loud peaks clip here instead of
+                            // going out of range.
+                            (mono_buf[i] * gain).clamp(-1.0, 1.0)
                         } else {
                             0.0
                         };
@@ -399,7 +413,10 @@ impl Engine {
                     let consumed = res.process(&pending, &mut mono_buf[..frames]);
                     pending.drain(..consumed);
                     for i in 0..frames {
-                        let v = mono_buf[i] * gain;
+                        // Clamp as in the 48 kHz path: above 100% the gain
+                        // exceeds unity and can push samples past the
+                        // +/-1.0 range WASAPI expects.
+                        let v = (mono_buf[i] * gain).clamp(-1.0, 1.0);
                         for c in 0..out_ch {
                             data[i * out_ch + c] = v;
                         }
