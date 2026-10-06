@@ -4,8 +4,7 @@
 Real-time noise filter for ham radio SSB voice on Windows. It captures live audio from a standard Windows audio device (WASAPI endpoint), removes white noise, and plays the result to a standard Windows audio device. While the radio is keyed (PTT state polled from a rigctld server, e.g. WSJT-X's rigctld-wsjtx.exe) the denoiser is bypassed and the raw band-passed signal passes through.
 
 ## Stack
-- Rust (rustup `stable`, 1.98 at scaffold time, x86_64-pc-windows-msvc), builds a single Windows `.exe`
-- Release build: `cargo build --release` (binary in `target\release\`)
+- Rust (rustup `stable`), builds a single Windows `.exe`. The session runs on a Linux OpenCode server: `cargo check`/`test`/`clippy` run natively (host gcc compiles the C++ engine), and the exe is cross-compiled — `cargo build --release --target x86_64-pc-windows-gnu` (binary in `target/x86_64-pc-windows-gnu/release/`, needs mingw-w64 g++ for the `cc` crate). The original toolchain was `x86_64-pc-windows-msvc` on Windows
 - Fast feedback: `cargo check`; lint: `cargo clippy`; tests: `cargo test`
 - `cpal 0.18` for audio I/O (WASAPI backend), `egui`/`eframe 0.36` for the GUI — deliberately the `glow` (OpenGL) renderer instead of eframe's default `wgpu` (Vulkan): some Intel Vulkan drivers crash at startup on other people's machines
 - Noise reduction: `nnnoiseless 0.5.2` (pure-Rust port of Xiph's RNNoise, BSD-3); with `default-features = false` its only deps are `easyfft` + `once_cell` (both transitive); GUI-selectable second engine: vendored C++20 `SpectralNR` (AetherSDR's EMNR port, GPL-3.0) compiled with `cc` behind an `extern "C"` bridge (`src/nr2.rs`)
@@ -50,6 +49,7 @@ Real-time noise filter for ham radio SSB voice on Windows. It captures live audi
 
 ## Conventions
 - Conventional commits (`feat:`, `fix:`, `refactor:`, `chore:`)
+- Commit and push only when the user explicitly asks — the user verifies sound on their own Windows machine (radio + rigctld) between builds; a successful build is not an approval
 - Run `cargo test` before committing
 - CI on PR once a workflow is added
 
