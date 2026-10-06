@@ -43,3 +43,9 @@ cargo build --release --target x86_64-pc-windows-gnu
 ## License
 
 GPL-3.0 — required by the vendored EMNR engine. See [LICENSE](LICENSE).
+
+## Future plans
+
+More ways to detect whether the radio is transmitting, alongside the current
+rigctld polling — for example via OmniRIG, or by simply reading the radio's
+COM port directly.
