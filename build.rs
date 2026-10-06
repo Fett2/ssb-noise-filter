@@ -28,6 +28,13 @@ fn main() {
         build.flag(if cfg!(debug_assertions) { "/Od" } else { "/O2" });
     } else {
         build.flag(if cfg!(debug_assertions) { "-g" } else { "-O2" });
+        // Static-link the C++ stdlib. cc's default emits
+        // `rustc-link-lib=stdc++` (dylib kind), which rustc wraps in
+        // `-Wl,-Bdynamic` — that per-library flag overrides any global
+        // `-static`, so the exe would import libstdc++-6.dll, which is
+        // absent on a stock Windows machine. The static-kind emit makes the
+        // app a self-contained single .exe.
+        build.cpp_link_stdlib_static(true);
     }
 
     build.compile("spectralnr");
