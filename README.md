@@ -27,7 +27,7 @@ the filter steps out of the way, so what you transmit is exactly what you hear.
 
 - Windows, one audio input device (set to 48 kHz / 32-bit float in Sound settings)
   and any audio output
-- Optional: a rigctld server for PTT (WSJT-X ships one — `rigctld-wsjtx.exe`,
+- Optional: a rigctld server for PTT,
   default `localhost:4532`). Without it the filter simply stays on.
 - That's it — one `.exe`, no installer, no dependencies.
 
