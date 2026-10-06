@@ -1,4 +1,4 @@
-This entire project is vibe coded.
+## *This entire project is vibe coded.*
 
 # SSB Noise Filter
 
