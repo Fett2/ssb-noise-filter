@@ -82,9 +82,9 @@ impl eframe::App for FilterApp {
             ui.label("RNNoise / NR2 + 300 Hz - 3 kHz bandpass; 48 kHz core, output resampled as needed");
             ui.add_space(8.0);
 
-            dropdown(ui, "Input (mic)", &engine.device_names, &mut engine.input_idx);
+            dropdown(ui, "Input (mic)", &engine.input_names, &mut engine.input_idx);
             ui.add_space(4.0);
-            dropdown(ui, "Output (speaker)", &engine.device_names, &mut engine.output_idx);
+            dropdown(ui, "Output (speaker)", &engine.output_names, &mut engine.output_idx);
             ui.add_space(4.0);
             filter_dropdown(ui, engine, rig_host, rig_port);
             ui.add_space(8.0);
@@ -192,6 +192,10 @@ impl eframe::App for FilterApp {
 
 fn dropdown(ui: &mut egui::Ui, label: &str, names: &[String], selected: &mut usize) {
     if names.is_empty() {
+        ui.horizontal(|ui| {
+            ui.label(label);
+            ui.weak("(no devices)");
+        });
         return;
     }
     egui::ComboBox::from_label(label)

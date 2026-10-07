@@ -49,8 +49,12 @@ impl Running {
 /// App state shared with the GUI layer.
 pub struct Engine {
     pub host: cpal::Host,
-    pub devices: Vec<cpal::Device>,
-    pub device_names: Vec<String>,
+    /// Endpoints openable as input (the Input dropdown's list).
+    pub input_devices: Vec<cpal::Device>,
+    pub input_names: Vec<String>,
+    /// Endpoints openable as output (the Output dropdown's list).
+    pub output_devices: Vec<cpal::Device>,
+    pub output_names: Vec<String>,
     pub input_idx: usize,
     pub output_idx: usize,
     pub error: Option<String>,
@@ -78,19 +82,25 @@ pub struct Engine {
 impl Engine {
     pub fn new() -> Self {
         let host = cpal::default_host();
-        let devices = host
-            .devices()
-            .map(|d| d.collect::<Vec<_>>())
-            .unwrap_or_default();
-        let device_names = devices.iter().map(name_of).collect();
-        let input_idx = default_index(&devices, host.default_input_device().as_ref());
-        let output_idx = default_index(&devices, host.default_output_device().as_ref());
+        let (input_devices, output_devices) = enumerate_split(&host);
+        let input_names = input_devices.iter().map(name_of).collect();
+        let output_names = output_devices.iter().map(name_of).collect();
+        let input_idx = host
+            .default_input_device()
+            .and_then(|d| input_devices.iter().position(|x| x.id().ok() == d.id().ok()))
+            .unwrap_or(0);
+        let output_idx = host
+            .default_output_device()
+            .and_then(|d| output_devices.iter().position(|x| x.id().ok() == d.id().ok()))
+            .unwrap_or(0);
         let rig = Rigctl::new();
         rig.spawn_poller();
         Self {
             host,
-            devices,
-            device_names,
+            input_devices,
+            input_names,
+            output_devices,
+            output_names,
             input_idx,
             output_idx,
             error: None,
@@ -111,19 +121,16 @@ impl Engine {
     }
 
     /// Re-enumerate devices, preserving the current selection when possible.
+    /// The fallback when the selected name is gone is index 0 of the list,
+    /// which is openable in that direction by construction.
     pub fn refresh_devices(&mut self) {
-        let in_name = self.device_names.get(self.input_idx).cloned();
-        let out_name = self.device_names.get(self.output_idx).cloned();
-        self.devices = self
-            .host
-            .devices()
-            .map(|d| d.collect::<Vec<_>>())
-            .unwrap_or_default();
-        self.device_names = self.devices.iter().map(name_of).collect();
-        self.input_idx = index_by_name(&self.device_names, in_name.as_deref())
-            .unwrap_or_else(|| default_index(&self.devices, self.host.default_input_device().as_ref()));
-        self.output_idx = index_by_name(&self.device_names, out_name.as_deref())
-            .unwrap_or_else(|| default_index(&self.devices, self.host.default_output_device().as_ref()));
+        let in_name = self.input_names.get(self.input_idx).cloned();
+        let out_name = self.output_names.get(self.output_idx).cloned();
+        (self.input_devices, self.output_devices) = enumerate_split(&self.host);
+        self.input_names = self.input_devices.iter().map(name_of).collect();
+        self.output_names = self.output_devices.iter().map(name_of).collect();
+        self.input_idx = index_by_name(&self.input_names, in_name.as_deref()).unwrap_or(0);
+        self.output_idx = index_by_name(&self.output_names, out_name.as_deref()).unwrap_or(0);
     }
 
     /// If the user picked different devices while running, restart the streams.
@@ -141,14 +148,14 @@ impl Engine {
     }
 
     pub fn start(&mut self) -> Result<(), String> {
-        if self.input_idx >= self.devices.len() {
-            return Err("select an input device".into());
+        if self.input_idx >= self.input_devices.len() {
+            return Err("no input devices; connect a microphone and click Refresh devices".into());
         }
-        if self.output_idx >= self.devices.len() {
-            return Err("select an output device".into());
+        if self.output_idx >= self.output_devices.len() {
+            return Err("no output devices; check the audio settings and click Refresh devices".into());
         }
-        let in_device = self.devices[self.input_idx].clone();
-        let out_device = self.devices[self.output_idx].clone();
+        let in_device = self.input_devices[self.input_idx].clone();
+        let out_device = self.output_devices[self.output_idx].clone();
         let in_config = stream_config(&in_device, true)?;
         let out_config = stream_config(&out_device, false)?;
         let in_ch = in_config.channels as usize;
@@ -480,27 +487,57 @@ fn stream_config(device: &cpal::Device, is_input: bool) -> Result<cpal::StreamCo
     })
 }
 
-/// Device name annotated with its WASAPI mix-format rates, so the user can
-/// see which devices run at which rate (input must be 48 kHz; the output is
-/// resampled to whatever its rate is).
+/// Whether the device can be opened in the requested direction. Beyond
+/// cpal's data-flow check (which misses bidirectional eRenderAndCapture
+/// endpoints), a device that yields a default config counts as openable.
+fn can_open(device: &cpal::Device, want_input: bool) -> bool {
+    if want_input {
+        device.supports_input() || device.default_input_config().is_ok()
+    } else {
+        device.supports_output() || device.default_output_config().is_ok()
+    }
+}
+
+/// All endpoints, split into those openable as input and those openable as
+/// output — each dropdown lists only its own direction, so a speaker can
+/// never be picked as input and vice versa.
+fn enumerate_split(host: &cpal::Host) -> (Vec<cpal::Device>, Vec<cpal::Device>) {
+    let devices = host
+        .devices()
+        .map(|d| d.collect::<Vec<_>>())
+        .unwrap_or_default();
+    let input: Vec<cpal::Device> =
+        devices.iter().filter(|d| can_open(d, true)).cloned().collect();
+    let output: Vec<cpal::Device> =
+        devices.iter().filter(|d| can_open(d, false)).cloned().collect();
+    (input, output)
+}
+
+/// Device name annotated with its usable direction and WASAPI mix-format
+/// rates (input must be 48 kHz; the output is resampled to whatever its
+/// rate is). Each dropdown lists only its own direction, so the marker
+/// distinguishes the devices that appear in both lists (bidirectional
+/// endpoints) from the single-direction ones.
 fn name_of(device: &cpal::Device) -> String {
     let khz = |r: u32| r as f64 / 1000.0;
+    let in_cfg = device.default_input_config().ok();
+    let out_cfg = device.default_output_config().ok();
+    let dir = match (can_open(device, true), can_open(device, false)) {
+        (true, true) => "in+out",
+        (true, false) => "in",
+        (false, true) => "out",
+        (false, false) => "no i/o",
+    };
     match (
-        device.default_input_config().ok().map(|c| c.sample_rate()),
-        device.default_output_config().ok().map(|c| c.sample_rate()),
+        in_cfg.as_ref().map(|c| c.sample_rate()),
+        out_cfg.as_ref().map(|c| c.sample_rate()),
     ) {
-        (Some(i), Some(o)) if i != o => format!("{device} ({} kHz in / {} kHz out)", khz(i), khz(o)),
-        (Some(i), _) | (_, Some(i)) => format!("{device} ({} kHz)", khz(i)),
-        _ => device.to_string(),
+        (Some(i), Some(o)) if i != o => format!("{device} ({dir}, {} kHz in / {} kHz out)", khz(i), khz(o)),
+        (Some(i), _) | (_, Some(i)) => format!("{device} ({dir}, {} kHz)", khz(i)),
+        _ => format!("{device} ({dir})"),
     }
 }
 
 fn index_by_name(names: &[String], name: Option<&str>) -> Option<usize> {
     name.and_then(|n| names.iter().position(|x| x == n))
-}
-
-fn default_index(devices: &[cpal::Device], default: Option<&cpal::Device>) -> usize {
-    default
-        .and_then(|d| devices.iter().position(|x| x.id().ok() == d.id().ok()))
-        .unwrap_or(0)
 }
