@@ -305,9 +305,15 @@ fn connect(source: &PttSource) -> Result<Conn, String> {
             if name.is_empty() {
                 return Err("serial: no port name".to_string());
             }
-            let p = serialport::new(name, *baud)
+            let mut p = serialport::new(name, *baud)
                 .open()
                 .map_err(|e| format!("serial: {name}: {e}"))?;
+            // Yaesu radios with a CAT RTS setting (the FTDX10 defaults it ON)
+            // only accept CAT commands while the computer asserts RTS. The crate
+            // leaves both control lines at the driver default, so assert them on
+            // open; failures are ignored because some adapters report no support.
+            let _ = p.write_request_to_send(true);
+            let _ = p.write_data_terminal_ready(true);
             Ok(Conn::Serial(p))
         }
     }
