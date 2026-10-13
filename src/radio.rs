@@ -17,8 +17,10 @@
 //!   between the F7 and E7 generations); newer Yaesu (FT-840/900/920/990/
 //!   1000 series) answer a 5-8 byte status block on the `FA` terminator;
 //!   the FT-767GX sends an 86-byte block without a terminator.
-//! - Yaesu FT-891/900/991 platform and the FTX-1: ASCII `TX;` reads the
-//!   transmit state (`0` RX, `1` CAT-keyed, `2` radio transmitting).
+//! - Yaesu FT-891/900/991 platform, the FTX-1 and the FT-DX10: ASCII `TX;`
+//!   reads the transmit state (`0` RX, `1` CAT-keyed, `2` radio transmitting).
+//!   The FT-DX10 exposes two virtual COM ports — the Enhanced COM Port is the
+//!   CAT one, the Standard COM Port is TX control only.
 //! - Ten-Tec Paragon II (CI-V): `FE FE 2C E0 17 FD`, bit 2 of the
 //!   second-to-last byte.
 //! - Xiegu G90 speaks Icom CI-V (address 0x88); the X-6200 answers the same
@@ -172,10 +174,10 @@ const SMARTSDR_PROBE: Probe = Probe {
     last_data: None,
 };
 
-/// Yaesu FT-891/900/991 platform + FTX-1: ASCII `TX;` read, `TX0;` RX /
-/// `TX1;` CAT keyed / `TX2;` radio transmitting. Both keyed states count
-/// as TX (the denoiser must bypass whenever the radio is or is about to be
-/// keyed).
+/// Yaesu FT-891/900/991 platform + FTX-1 + FT-DX10: ASCII `TX;` read,
+/// `TX0;` RX / `TX1;` CAT keyed / `TX2;` radio transmitting. Both keyed
+/// states count as TX (the denoiser must bypass whenever the radio is or is
+/// about to be keyed). The FT-DX10's `TX` read is confirmed from its CAT manual.
 const YAESU_TX_PROBE: Probe = Probe {
     cmd: b"TX;",
     read: ReadSpec::Until(b';', 16),
@@ -397,9 +399,10 @@ pub const RADIOS: &[RadioDef] = &[
             last_data: None,
         },
     },
-    // FT-891/991 platform + FTX-1 (ASCII TX;).
+    // FT-891/991 platform + FTX-1 + FT-DX10 (ASCII TX;).
     RadioDef { name: "Yaesu FT-891", probe: YAESU_TX_PROBE },
     RadioDef { name: "Yaesu FT-991", probe: YAESU_TX_PROBE },
+    RadioDef { name: "Yaesu FT-DX10", probe: YAESU_TX_PROBE },
     RadioDef { name: "Yaesu FTX-1", probe: YAESU_TX_PROBE },
     // Ten-Tec.
     RadioDef {
@@ -492,6 +495,12 @@ mod tests {
         assert_eq!(r.probe.parse(b"TX1;"), Some(1));
         assert_eq!(r.probe.parse(b"TX2;"), Some(1));
         assert_eq!(r.probe.parse(b"TV;"), None);
+        // FT-DX10: same `TX;` read, confirmed by its CAT manual (0 = both off,
+        // 1 = CAT-keyed, 2 = radio transmitting).
+        let dx10 = radio_by_name("Yaesu FT-DX10").unwrap();
+        assert_eq!(dx10.probe.cmd, b"TX;");
+        assert_eq!(dx10.probe.parse(b"TX1;"), Some(1));
+        assert_eq!(dx10.probe.parse(b"TX2;"), Some(1));
     }
 
     #[test]
@@ -573,6 +582,6 @@ mod tests {
             assert!(!r.probe.cmd.is_empty());
             assert!(!r.probe.tx.is_empty() || r.probe.last_data.is_some());
         }
-        assert_eq!(RADIOS.len(), 58);
+        assert_eq!(RADIOS.len(), 59);
     }
 }
