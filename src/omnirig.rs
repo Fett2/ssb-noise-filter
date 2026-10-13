@@ -294,8 +294,12 @@ impl Client {
                                 hr2 as u32
                             )
                         } else if in32 || in64 {
+                            // A 64-bit process can still attach to an already
+                            // running OmniRig through the class object table
+                            // (Delphi's CoRegisterClassObject): the registry is
+                            // only consulted when the server has to be started.
                             format!(
-                                "OmniRig is installed but its COM class is registered only in the 32-bit registry view, so this 64-bit process cannot reach it (0x{:08X}); the OmniRig method needs the 32-bit build of this app",
+                                "OmniRig is installed but its COM class is registered only in the 32-bit registry view, so this process cannot start it (0x{:08X}); start OmniRig and connect to the running instance",
                                 hr2 as u32
                             )
                         } else {

@@ -183,12 +183,9 @@ impl FilterApp {
                     self.omnirig_rig = rig;
                     self.save_settings();
                 }
-                let note = if cfg!(target_pointer_width = "64") {
-                    "OmniRig (the classic freeware from dxatlas.com) is polled through its COM interface; the selected rig slot is used. Its COM class is registered only in the 32-bit registry view, so the OmniRig method needs the 32-bit build of this app."
-                } else {
-                    "OmniRig (the classic freeware from dxatlas.com) is polled through its COM interface; the selected rig slot is used. It must be installed."
-                };
-                ui.weak(note);
+                ui.weak(
+                    "OmniRig (the classic freeware from dxatlas.com) is polled through its COM interface; the selected rig slot is used. It must be installed.",
+                );
             }
             settings::METHOD_SERIAL => {
                 ui.horizontal(|ui| {
@@ -217,7 +214,7 @@ impl FilterApp {
                         self.save_settings();
                     }
                 });
-                ui.weak("The radio's CAT port; the baud rate must match the radio's setting.");
+                ui.weak("The radio's CAT port; the baud rate must match the radio's setting. RTS is asserted on open (Yaesu's CAT RTS gate) — if the radio keys on RTS/DTR, leave that setting OFF.");
             }
             _ => {}
         }
