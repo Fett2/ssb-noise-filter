@@ -11,7 +11,7 @@ use nnnoiseless::DenoiseState;
 use crate::biquad::Biquad;
 use crate::nr2::{self, Nr2};
 use crate::resampler::Resampler;
-use crate::rigctl::{self, Rigctl};
+use crate::ptt::{self, Ptt};
 use crate::spsc::SpscRing;
 
 /// RNNoise works at 48 kHz in frames of 480 samples (10 ms).
@@ -71,9 +71,10 @@ pub struct Engine {
     /// 0.0-1.0: gain applied to the samples written to the output device.
     /// Published by the GUI, read by the render callback.
     pub out_gain: Arc<AtomicU32>,
-    /// Rig PTT via rigctld; the poller thread updates `rig.ptt` and the
-    /// capture callback bypasses the denoiser while the rig is keyed.
-    pub rig: Rigctl,
+    /// PTT detection (rigctld / OmniRig / serial); the poller thread
+    /// updates `ptt.ptt` and the capture callback bypasses the denoiser
+    /// while the rig is keyed.
+    pub ptt: Ptt,
     pub display_in: f32,
     pub display_out: f32,
     running: Option<Running>,
@@ -93,8 +94,8 @@ impl Engine {
             .default_output_device()
             .and_then(|d| output_devices.iter().position(|x| x.id().ok() == d.id().ok()))
             .unwrap_or(0);
-        let rig = Rigctl::new();
-        rig.spawn_poller();
+        let ptt = Ptt::new();
+        ptt.spawn_poller();
         Self {
             host,
             input_devices,
@@ -109,7 +110,7 @@ impl Engine {
             nr_amount: Arc::new(AtomicU32::new(0.8f32.to_bits())),
             filter: Arc::new(AtomicU8::new(nr2::ENGINE_RNNOISE)),
             out_gain: Arc::new(AtomicU32::new(1.0f32.to_bits())),
-            rig,
+            ptt,
             display_in: 0.0,
             display_out: 0.0,
             running: None,
@@ -166,7 +167,7 @@ impl Engine {
         let out_peak = Arc::clone(&self.out_peak);
         let nr_amount = Arc::clone(&self.nr_amount);
         let out_gain = Arc::clone(&self.out_gain);
-        let ptt = Arc::clone(&self.rig.ptt);
+        let ptt_state = Arc::clone(&self.ptt.ptt);
 
         let filter = Arc::clone(&self.filter);
 
@@ -204,7 +205,7 @@ impl Engine {
         let mut push_buf = vec![0.0f32; FRAME + nr2::HOP];
         let mut first_push = true;
         let mut last_filter = filter.load(Ordering::Relaxed);
-        let mut prev_keyed = rigctl::is_keyed(self.rig.ptt.load(Ordering::Relaxed));
+        let mut prev_keyed = ptt::is_keyed(self.ptt.ptt.load(Ordering::Relaxed));
         let mut total_in: u64 = 0; // stream position: samples received
         let mut ring_pos: u64 = 0; // stream position at the tail of the ring
         let ring_for_render = Arc::clone(&ring);
@@ -258,7 +259,7 @@ impl Engine {
                     // TX→RX edge, flush NR2's stale overlap-add ring but
                     // keep its converged noise estimate (AetherSDR's own
                     // pattern).
-                    let keyed = rigctl::is_keyed(ptt.load(Ordering::Relaxed));
+                    let keyed = ptt::is_keyed(ptt_state.load(Ordering::Relaxed));
                     if prev_keyed && !keyed {
                         nr2.reset_transient();
                     }

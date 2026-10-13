@@ -20,6 +20,11 @@ eframe = { version = "0.36", default-features = false, features = [
 ] }
 egui = "0.36"
 nnnoiseless = { version = "0.5.2", default-features = false }
+# direct serial (COM port) PTT polling of the radio (MPL-2.0, compatible
+# with the project's GPL-3.0; pure FFI, no new DLLs). default-features =
+# false drops the Linux-only libudev enumeration convenience; port names
+# are typed in, not enumerated.
+serialport = { version = "4", default-features = false }
 
 [build-dependencies]
 cc = "1"
