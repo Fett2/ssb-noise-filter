@@ -4,7 +4,7 @@
 
 # SSB Noise Filter
 
-A real-time noise filter for ham radio SSB voice on Windows. It sits between
+A real-time noise filter for ham radio SSB on Windows. It sits between
 a Windows audio input device and a Windows audio output device: it listens
 to the band, removes the white noise and static, and hands you clean voices
 back. The moment your radio keys up (PTT is polled from a rigctld server),
