@@ -32,6 +32,8 @@ the filter steps out of the way, so what you transmit is exactly what you hear.
   default `localhost:4532`). Without it the filter simply stays on.
 - That's it — one `.exe`, no installer, no dependencies.
 
+- I recommend setting the receive bandwidth on your radio to around 3000.
+
 ## Building
 
 It's Rust. Toolchain details live in [AGENTS.md](AGENTS.md); the Windows exe
