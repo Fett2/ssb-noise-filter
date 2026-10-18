@@ -62,7 +62,23 @@ extern "C" {
     fn nr2_gamma_table_value(index: c_int) -> f64;
     fn nr2_transient_reset_count(handle: *const c_void) -> u64;
     fn nr2_noise_estimate_reset_count(handle: *const c_void) -> u64;
+    fn nr2_gain_smooth(handle: *const c_void) -> f64;
+    fn nr2_npe_method(handle: *const c_void) -> c_int;
 }
+
+/// The app's NR2 settings, measured on the corpus rather than taken from the engine's
+/// own constructor. The vendored C++ keeps its upstream values; the app's choice lives
+/// here so it is visible, and the getters below let a test pin it.
+///
+/// `gain_smooth` 0.95 — a time constant of about 104 ms. The engine's 0.85 is about 36 ms,
+/// which the sweep ranks with the settings the ear rejects as buzzy: 0.70 (15 ms) scored
+/// best on fidelity on the newest file but sounded wrong, and 0.95 is what the ear accepted
+/// and what the sweep picked on every earlier file.
+pub const DEFAULT_GAIN_SMOOTH: f32 = 0.95;
+
+/// `npe_method` MMSE — the engine's default (OSMS) never wins on any file in the corpus;
+/// MMSE wins three of the four measurements, NSTAT the other.
+pub const DEFAULT_NPE_METHOD: i32 = 1;
 
 /// One NR2 engine instance (opaque C++ object behind an `extern "C"` bridge).
 pub struct Nr2 {
@@ -83,7 +99,10 @@ impl Nr2 {
             nr2_create(FFT_SIZE as c_int, 48_000, OVERLAP as c_int, 0)
         };
         assert!(!handle.is_null(), "NR2 engine creation failed");
-        Nr2 { handle }
+        let engine = Nr2 { handle };
+        engine.set_gain_smooth(DEFAULT_GAIN_SMOOTH);
+        engine.set_npe_method(DEFAULT_NPE_METHOD);
+        engine
     }
 
     /// Feed mono f32 samples; `output` receives the same number of
@@ -142,6 +161,17 @@ impl Nr2 {
         unsafe { nr2_set_npe_method(self.handle, m) };
     }
 
+    // Read-back for the two settings the app pins, so a test can prove `new()` applied
+    // them rather than leaving the engine's constructor values in place.
+
+    pub fn gain_smooth(&self) -> f32 {
+        unsafe { nr2_gain_smooth(self.handle as *const c_void) as f32 }
+    }
+
+    pub fn npe_method(&self) -> i32 {
+        unsafe { nr2_npe_method(self.handle as *const c_void) }
+    }
+
     pub fn set_ae_filter(&self, on: bool) {
         unsafe { nr2_set_ae_filter(self.handle, on as c_int) };
     }
@@ -197,6 +227,15 @@ mod tests {
         (116161, 1.0),
     ];
     const TABLE_LEN: i32 = 116_162; // 2 * 241 * 241
+
+    /// The app's measured settings, not the engine's constructor values. Pinned so a
+    /// change to the vendored header cannot silently move what the user hears.
+    #[test]
+    fn new_applies_the_measured_defaults() {
+        let engine = Nr2::new();
+        assert_eq!(engine.gain_smooth(), DEFAULT_GAIN_SMOOTH);
+        assert_eq!(engine.npe_method(), DEFAULT_NPE_METHOD);
+    }
 
     /// Deterministic LCG noise in [-0.5, 0.5]; `hops` of 256 samples —
     /// the engine must be fed at the hop cadence.

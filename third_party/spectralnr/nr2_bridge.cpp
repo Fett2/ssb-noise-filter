@@ -132,4 +132,14 @@ unsigned long long nr2_noise_estimate_reset_count(const void* handle)
         ->noiseEstimateResetCount();
 }
 
+double nr2_gain_smooth(const void* handle)
+{
+    return static_cast<const AetherSDR::SpectralNR*>(handle)->gainSmooth();
+}
+
+int nr2_npe_method(const void* handle)
+{
+    return static_cast<const AetherSDR::SpectralNR*>(handle)->npeMethod();
+}
+
 }  // extern "C"
